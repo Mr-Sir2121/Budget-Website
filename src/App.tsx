@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  BillItem,
   BudgetPersonResult,
   PayPeriod,
   PayoffResult,
@@ -58,27 +57,13 @@ interface BudgetState {
   persons: PersonState[];
 }
 
-const createBill = (personId: string, index: number, label: string, amount: number): BillItem => ({
-  id: `${personId}-bill-${index + 1}`,
-  label,
-  amount,
-});
-
 const PERSON_TEMPLATES: PersonState[] = [
   {
     id: 'person-1',
     name: 'Person 1',
     paychecks: [2342.97, 2342.97, 2342.97, 2342.97, 2342.97],
     payPeriod: 'Semimonthly',
-    bills: [
-      createBill('person-1', 0, 'Car Payment', 130.0),
-      createBill('person-1', 1, 'Utilities', 228.0),
-      createBill('person-1', 2, 'Phone', 45.0),
-      createBill('person-1', 3, 'Streaming', 16.0),
-      createBill('person-1', 4, 'Cloud Storage', 6.37),
-      createBill('person-1', 5, 'Music', 21.26),
-      createBill('person-1', 6, 'Miscellaneous', 10.0),
-    ],
+    bills: [130.0, 228.0, 45.0, 16.0, 6.37, 21.26, 10.0],
     groceries: 400,
     gas: 120,
     savingsRate: 0.2,
@@ -104,12 +89,7 @@ const PERSON_TEMPLATES: PersonState[] = [
       759.2,
     ],
     payPeriod: 'Weekly',
-    bills: [
-      createBill('person-2', 0, 'Car Insurance', 59.44),
-      createBill('person-2', 1, 'Utilities', 150.0),
-      createBill('person-2', 2, 'Subscriptions', 20.0),
-      createBill('person-2', 3, 'Gym', 16.0),
-    ],
+    bills: [59.44, 150.0, 20.0, 16.0],
     groceries: 400,
     gas: 120,
     savingsRate: 0.2,
@@ -122,7 +102,7 @@ const PERSON_TEMPLATES: PersonState[] = [
 const clonePerson = (person: PersonState): PersonState => ({
   ...person,
   paychecks: [...person.paychecks],
-  bills: person.bills.map((bill) => ({ ...bill })),
+  bills: [...person.bills],
 });
 
 const createDefaultState = (): BudgetState => ({
@@ -148,38 +128,6 @@ const sanitizePayPeriod = (value: unknown, fallback: PayPeriod): PayPeriod => {
     return value;
   }
   return fallback;
-};
-
-const sanitizeBills = (value: unknown, fallbackBills: BillItem[], personId: string): BillItem[] => {
-  if (!Array.isArray(value) || value.length === 0) {
-    return fallbackBills.map((bill, index) => ({
-      id: bill.id && bill.id.length > 0 ? bill.id : `${personId}-bill-${index + 1}`,
-      label: bill.label?.trim().length ? bill.label : `Bill ${index + 1}`,
-      amount: clampNumber(bill.amount, 0),
-    }));
-  }
-
-  const sanitized = (value as unknown[]).map((entry, index) => {
-    const fallback = fallbackBills[index] ?? createBill(personId, index, `Bill ${index + 1}`, 0);
-    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-      const candidate = entry as Partial<BillItem>;
-      const label =
-        typeof candidate.label === 'string' && candidate.label.trim().length > 0
-          ? candidate.label
-          : fallback.label;
-      const amount = clampNumber(candidate.amount, fallback.amount);
-      const id = typeof candidate.id === 'string' && candidate.id.length > 0 ? candidate.id : fallback.id;
-      return { id, label, amount } satisfies BillItem;
-    }
-    const amount = clampNumber(entry, fallback.amount);
-    return { ...fallback, amount } satisfies BillItem;
-  });
-
-  return sanitized.map((bill, index) => ({
-    id: bill.id && bill.id.length > 0 ? bill.id : `${personId}-bill-${index + 1}`,
-    label: bill.label?.trim().length ? bill.label : `Bill ${index + 1}`,
-    amount: clampNumber(bill.amount, 0),
-  }));
 };
 
 const loadInitialState = (): BudgetState => {
@@ -208,7 +156,9 @@ const loadInitialState = (): BudgetState => {
         ? (stored as PersonState).paychecks.map((value) => clampNumber(value, 0))
         : fallback.paychecks;
 
-      const bills = sanitizeBills((stored as PersonState).bills, fallback.bills, fallback.id);
+      const bills = Array.isArray((stored as PersonState).bills) && (stored as PersonState).bills.length > 0
+        ? (stored as PersonState).bills.map((value) => clampNumber(value, 0))
+        : fallback.bills;
 
       return {
         ...fallback,

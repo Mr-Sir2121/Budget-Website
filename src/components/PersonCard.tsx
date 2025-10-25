@@ -1,5 +1,4 @@
 import {
-  BillItem,
   BudgetPersonResult,
   PayPeriod,
   PAY_PERIODS,
@@ -46,14 +45,6 @@ const renderCategoryRow = (label: string, amount: number, percentage: number) =>
   </div>
 );
 
-const randomId = () => Math.random().toString(36).slice(2, 11);
-
-const createBill = (label: string, amount = 0): BillItem => ({
-  id: `bill-${randomId()}`,
-  label,
-  amount,
-});
-
 const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange }: PersonCardProps) => {
   const handleFieldChange = <K extends keyof PersonState>(key: K, value: PersonState[K]) => {
     onChange({ ...person, [key]: value });
@@ -68,17 +59,9 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
     handleFieldChange('paychecks', next);
   };
 
-  const updateBill = (index: number, updater: (bill: BillItem) => BillItem) => {
-    const next = person.bills.map((bill, idx) => (idx === index ? updater(bill) : bill));
+  const handleBillChange = (index: number, value: string) => {
+    const next = person.bills.map((item, idx) => (idx === index ? numberFromInput(value) : item));
     handleFieldChange('bills', next);
-  };
-
-  const handleBillAmountChange = (index: number, value: string) => {
-    updateBill(index, (bill) => ({ ...bill, amount: numberFromInput(value) }));
-  };
-
-  const handleBillLabelChange = (index: number, value: string) => {
-    updateBill(index, (bill) => ({ ...bill, label: value }));
   };
 
   const addPaycheck = () => {
@@ -91,13 +74,12 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
   };
 
   const addBill = () => {
-    const nextLabel = `Bill ${person.bills.length + 1}`;
-    handleFieldChange('bills', [...person.bills, createBill(nextLabel)]);
+    handleFieldChange('bills', [...person.bills, 0]);
   };
 
   const removeBill = (index: number) => {
     const next = person.bills.filter((_, idx) => idx !== index);
-    handleFieldChange('bills', next.length > 0 ? next : [createBill('Bill 1')]);
+    handleFieldChange('bills', next.length > 0 ? next : [0]);
   };
 
   const sliderValueSavings = Math.min(Math.round(person.savingsRate * 100), 80);
@@ -186,27 +168,20 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
               </button>
             </div>
             <div className="mt-2 space-y-2">
-              {person.bills.map((bill, index) => (
-                <div key={bill.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                  <input
-                    type="text"
-                    value={bill.label}
-                    onChange={(event) => handleBillLabelChange(index, event.target.value)}
-                    placeholder={`Bill ${index + 1}`}
-                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
-                  />
+              {person.bills.map((value, index) => (
+                <div key={`bill-${person.id}-${index}`} className="flex items-center gap-3">
                   <input
                     type="number"
                     min={0}
                     step="0.01"
-                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={bill.amount}
-                    onChange={(event) => handleBillAmountChange(index, event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    value={value}
+                    onChange={(event) => handleBillChange(index, event.target.value)}
                   />
                   <button
                     type="button"
                     onClick={() => removeBill(index)}
-                    className="justify-self-end rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 hover:border-danger/30 hover:text-danger"
+                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 hover:border-danger/30 hover:text-danger"
                   >
                     Remove
                   </button>

@@ -2,16 +2,10 @@ export type PayPeriod = 'Semimonthly' | 'Weekly' | 'Biweekly';
 
 export const PAY_PERIODS: PayPeriod[] = ['Semimonthly', 'Weekly', 'Biweekly'];
 
-export interface BillItem {
-  id: string;
-  label: string;
-  amount: number;
-}
-
 export interface PersonFinancialProfile {
   paychecks: number[];
   payPeriod: PayPeriod;
-  bills: BillItem[];
+  bills: number[];
   groceries: number;
   gas: number;
   savingsRate: number; // slider value 0-1
@@ -92,7 +86,7 @@ export const computeBudgetPerson = (
 ): BudgetPersonResult => {
   const monthlyIncome = monthlyFromPay(average(person.paychecks), person.payPeriod);
   const rent = clampCurrency(rentShare);
-  const bills = roundCurrency(sum(person.bills.map((bill) => bill.amount)));
+  const bills = roundCurrency(sum(person.bills));
   const groceries = roundCurrency(clampCurrency(person.groceries));
   const gas = roundCurrency(clampCurrency(person.gas));
   const savings = roundCurrency(clampCurrency(monthlyIncome * clampBetween(person.savingsRate, 0, 1)));
