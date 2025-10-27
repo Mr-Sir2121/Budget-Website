@@ -1,4 +1,5 @@
 import {
+  BillItem,
   BudgetPersonResult,
   PayPeriod,
   PAY_PERIODS,
@@ -45,6 +46,14 @@ const renderCategoryRow = (label: string, amount: number, percentage: number) =>
   </div>
 );
 
+const randomId = () => Math.random().toString(36).slice(2, 11);
+
+const createBill = (label: string, amount = 0): BillItem => ({
+  id: `bill-${randomId()}`,
+  label,
+  amount,
+});
+
 const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange }: PersonCardProps) => {
   const handleFieldChange = <K extends keyof PersonState>(key: K, value: PersonState[K]) => {
     onChange({ ...person, [key]: value });
@@ -59,9 +68,17 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
     handleFieldChange('paychecks', next);
   };
 
-  const handleBillChange = (index: number, value: string) => {
-    const next = person.bills.map((item, idx) => (idx === index ? numberFromInput(value) : item));
+  const updateBill = (index: number, updater: (bill: BillItem) => BillItem) => {
+    const next = person.bills.map((bill, idx) => (idx === index ? updater(bill) : bill));
     handleFieldChange('bills', next);
+  };
+
+  const handleBillAmountChange = (index: number, value: string) => {
+    updateBill(index, (bill) => ({ ...bill, amount: numberFromInput(value) }));
+  };
+
+  const handleBillLabelChange = (index: number, value: string) => {
+    updateBill(index, (bill) => ({ ...bill, label: value }));
   };
 
   const addPaycheck = () => {
@@ -74,12 +91,13 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
   };
 
   const addBill = () => {
-    handleFieldChange('bills', [...person.bills, 0]);
+    const nextLabel = `Bill ${person.bills.length + 1}`;
+    handleFieldChange('bills', [...person.bills, createBill(nextLabel)]);
   };
 
   const removeBill = (index: number) => {
     const next = person.bills.filter((_, idx) => idx !== index);
-    handleFieldChange('bills', next.length > 0 ? next : [0]);
+    handleFieldChange('bills', next.length > 0 ? next : [createBill('Bill 1')]);
   };
 
   const sliderValueSavings = Math.min(Math.round(person.savingsRate * 100), 80);
@@ -138,6 +156,7 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
                 <div key={`paycheck-${person.id}-${index}`} className="flex items-center gap-3">
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     step="0.01"
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
@@ -168,25 +187,45 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
               </button>
             </div>
             <div className="mt-2 space-y-2">
-              {person.bills.map((value, index) => (
-                <div key={`bill-${person.id}-${index}`} className="flex items-center gap-3">
+              {person.bills.map((bill, index) => (
+                <div key={bill.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                  <input
+                    type="text"
+                    value={bill.label}
+                    onChange={(event) => handleBillLabelChange(index, event.target.value)}
+                    placeholder={`Bill ${index + 1}`}
+                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    aria-label={`Label for bill ${index + 1}`}
+                  />
                   <input
                     type="number"
+                    inputMode="decimal"
                     min={0}
                     step="0.01"
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
-                    value={value}
-                    onChange={(event) => handleBillChange(index, event.target.value)}
+                    className="rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    value={bill.amount}
+                    onChange={(event) => handleBillAmountChange(index, event.target.value)}
                   />
                   <button
                     type="button"
                     onClick={() => removeBill(index)}
-                    className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 hover:border-danger/30 hover:text-danger"
+                    className="justify-self-end rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 hover:border-danger/30 hover:text-danger"
                   >
                     Remove
                   </button>
                 </div>
               ))}
+            </div>
+            <div className="mt-3 rounded-2xl bg-slate-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Bill summary</p>
+              <ul className="mt-2 space-y-1 text-sm text-slate-600">
+                {person.bills.map((bill, index) => (
+                  <li key={`${bill.id}-summary`} className="flex items-center justify-between">
+                    <span className="font-medium text-slate-700">{bill.label || `Bill ${index + 1}`}</span>
+                    <span className="font-semibold text-slate-900">{formatCurrency(bill.amount)}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
 
@@ -195,23 +234,35 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
               <label className="text-sm font-semibold text-slate-600">Groceries / month</label>
               <input
                 type="number"
+                inputMode="decimal"
                 min={0}
                 step="0.01"
                 value={person.groceries}
                 onChange={(event) => handleFieldChange('groceries', numberFromInput(event.target.value))}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
+              <p className="mt-1 text-xs text-slate-500">
+                {budget.monthlyIncome > 0
+                  ? `${((budget.groceries / budget.monthlyIncome) * 100).toFixed(1)}% of monthly income`
+                  : '0.0% of monthly income'}
+              </p>
             </div>
             <div>
               <label className="text-sm font-semibold text-slate-600">Gas / month</label>
               <input
                 type="number"
+                inputMode="decimal"
                 min={0}
                 step="0.01"
                 value={person.gas}
                 onChange={(event) => handleFieldChange('gas', numberFromInput(event.target.value))}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
+              <p className="mt-1 text-xs text-slate-500">
+                {budget.monthlyIncome > 0
+                  ? `${((budget.gas / budget.monthlyIncome) * 100).toFixed(1)}% of monthly income`
+                  : '0.0% of monthly income'}
+              </p>
             </div>
           </div>
 
@@ -251,6 +302,7 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
               <label className="text-sm font-semibold text-slate-600">Starting Savings</label>
               <input
                 type="number"
+                inputMode="decimal"
                 min={0}
                 step="0.01"
                 value={person.startingSavings}
@@ -262,6 +314,7 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
               <label className="text-sm font-semibold text-slate-600">Current Debt</label>
               <input
                 type="number"
+                inputMode="decimal"
                 min={0}
                 step="0.01"
                 value={person.startingDebt}
