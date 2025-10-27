@@ -8,6 +8,7 @@ import {
   PayoffResult,
   PersonFinancialProfile,
   SavingsPoint,
+  average,
   formatCurrency,
 } from '../lib/finance';
 
@@ -16,12 +17,15 @@ export interface PersonState extends PersonFinancialProfile {
   name: string;
 }
 
+type PersonViewMode = 'quick' | 'advanced';
+
 interface PersonCardProps {
   person: PersonState;
   rentShare: number;
   budget: BudgetPersonResult;
   payoff: PayoffResult;
   savingsPoints: SavingsPoint[];
+  mode: PersonViewMode;
   onChange: (person: PersonState) => void;
 }
 
@@ -55,7 +59,7 @@ interface PanelProps {
   children: ReactNode;
 }
 
-const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange }: PersonCardProps) => {
+const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, mode, onChange }: PersonCardProps) => {
   const [openPanels, setOpenPanels] = useState<Record<PanelKey, boolean>>({
     income: true,
     essentials: false,
@@ -117,6 +121,15 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
 
   const finalSavings = savingsPoints.length > 0 ? savingsPoints[savingsPoints.length - 1].amount : person.startingSavings;
   const billCount = person.bills.length;
+  const averagePaycheck = useMemo(() => average(person.paychecks), [person.paychecks]);
+  const billsTotal = useMemo(
+    () => person.bills.reduce((acc, bill) => acc + (Number.isFinite(bill.amount) ? Math.max(bill.amount, 0) : 0), 0),
+    [person.bills],
+  );
+  const needsDelta = budget.needsPercentage - 50;
+  const wantsDelta = budget.wantsPercentage - 30;
+  const savingsDelta = budget.savingsDebtPercentage - 20;
+  const payoffMonths = Number.isFinite(payoff.months) ? (payoff.months as number) : null;
 
   const summaryItems = useMemo(
     () => [
@@ -153,6 +166,235 @@ const PersonCard = ({ person, rentShare, budget, payoff, savingsPoints, onChange
       })),
     [budget],
   );
+
+  const handleAveragePaycheckChange = (value: string) => {
+    const amount = numberFromInput(value);
+    const next = person.paychecks.length > 0 ? person.paychecks.map(() => amount) : [amount];
+    handleFieldChange('paychecks', next);
+  };
+
+  if (mode === 'quick') {
+    return (
+      <article className="space-y-6 rounded-3xl bg-white p-6 shadow-soft ring-1 ring-slate-200/60">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-xl font-semibold text-slate-900">{person.name}</h3>
+            <p className="text-sm text-slate-600">
+              Monthly income {formatCurrency(budget.monthlyIncome)} • Rent share {formatCurrency(rentShare)} ({rentPercent.toFixed(1)}%)
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {summaryItems.map((item) => (
+              <div key={item.label} className="rounded-2xl bg-slate-50 px-4 py-2 text-left">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{item.label}</p>
+                <p className="text-sm font-semibold text-slate-900">{item.value}</p>
+                <p className="text-xs text-slate-500">{item.helper}</p>
+              </div>
+            ))}
+          </div>
+        </header>
+
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-avg-paycheck`}>
+                Average paycheck
+              </label>
+              <input
+                id={`${person.id}-avg-paycheck`}
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={averagePaycheck}
+                onChange={(event) => handleAveragePaycheckChange(event.target.value)}
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 text-base font-semibold text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Based on {person.paychecks.length} recent paycheck{person.paychecks.length === 1 ? '' : 's'}. Edit history in Advanced mode.
+              </p>
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-pay-period-quick`}>
+                Pay frequency
+              </label>
+              <select
+                id={`${person.id}-pay-period-quick`}
+                value={person.payPeriod}
+                onChange={handlePayPeriodChange}
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+              >
+                {PAY_PERIODS.map((period) => (
+                  <option key={period} value={period}>
+                    {period}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">Automatically converted to monthly for calculations.</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-quick-groceries`}>
+                Groceries per month
+              </label>
+              <input
+                id={`${person.id}-quick-groceries`}
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={person.groceries}
+                onChange={(event) => handleFieldChange('groceries', numberFromInput(event.target.value))}
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                {budget.monthlyIncome > 0
+                  ? `${((budget.groceries / budget.monthlyIncome) * 100).toFixed(1)}% of monthly income`
+                  : '0.0% of monthly income'}
+              </p>
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-quick-gas`}>
+                Gas & transport
+              </label>
+              <input
+                id={`${person.id}-quick-gas`}
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={person.gas}
+                onChange={(event) => handleFieldChange('gas', numberFromInput(event.target.value))}
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                {budget.monthlyIncome > 0
+                  ? `${((budget.gas / budget.monthlyIncome) * 100).toFixed(1)}% of monthly income`
+                  : '0.0% of monthly income'}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-quick-savings`}>
+                Savings rate
+              </label>
+              <div className="mt-1 rounded-2xl bg-slate-100 px-3 py-2">
+                <input
+                  id={`${person.id}-quick-savings`}
+                  type="range"
+                  min={0}
+                  max={80}
+                  value={clampPercentage(sliderValueSavings)}
+                  onChange={(event) => handleFieldChange('savingsRate', numberFromInput(event.target.value) / 100)}
+                  className="w-full accent-primary"
+                />
+                <p className="mt-1 text-xs font-semibold text-slate-600">
+                  {sliderValueSavings}% ≈ {formatCurrency(budget.savings)} per month
+                </p>
+              </div>
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-quick-wants`}>
+                Wants & fun rate
+              </label>
+              <div className="mt-1 rounded-2xl bg-slate-100 px-3 py-2">
+                <input
+                  id={`${person.id}-quick-wants`}
+                  type="range"
+                  min={0}
+                  max={80}
+                  value={clampPercentage(sliderValueWants)}
+                  onChange={(event) => handleFieldChange('wantsRate', numberFromInput(event.target.value) / 100)}
+                  className="w-full accent-primary"
+                />
+                <p className="mt-1 text-xs font-semibold text-slate-600">
+                  {sliderValueWants}% ≈ {formatCurrency(budget.wants)} per month
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-quick-starting-savings`}>
+                Starting savings
+              </label>
+              <input
+                id={`${person.id}-quick-starting-savings`}
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={person.startingSavings}
+                onChange={(event) => handleFieldChange('startingSavings', numberFromInput(event.target.value))}
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-slate-600" htmlFor={`${person.id}-quick-starting-debt`}>
+                Current debt
+              </label>
+              <input
+                id={`${person.id}-quick-starting-debt`}
+                type="number"
+                inputMode="decimal"
+                min={0}
+                step="0.01"
+                value={person.startingDebt}
+                onChange={(event) => handleFieldChange('startingDebt', numberFromInput(event.target.value))}
+                className="mt-1 w-full rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                {payoffMonths !== null
+                  ? `Debt-free in about ${payoffMonths.toFixed(0)} months`
+                  : 'Set a monthly debt amount to see a payoff date.'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Benchmarks</p>
+            <ul className="mt-2 space-y-1 text-sm text-slate-600">
+              <li>
+                Needs at {budget.needsPercentage.toFixed(1)}% ({needsDelta >= 0 ? '+' : ''}{needsDelta.toFixed(1)}% vs 50% guideline)
+              </li>
+              <li>
+                Wants at {budget.wantsPercentage.toFixed(1)}% ({wantsDelta >= 0 ? '+' : ''}{wantsDelta.toFixed(1)}% vs 30% guideline)
+              </li>
+              <li>
+                Savings & debt at {budget.savingsDebtPercentage.toFixed(1)}% ({savingsDelta >= 0 ? '+' : ''}{savingsDelta.toFixed(1)}% vs 20% guideline)
+              </li>
+            </ul>
+          </div>
+          <div className="rounded-2xl bg-slate-50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bills snapshot</p>
+            <p className="text-sm text-slate-600">{billCount} recurring bill{billCount === 1 ? '' : 's'} totaling {formatCurrency(billsTotal)}.</p>
+            <ul className="mt-2 space-y-1 text-sm text-slate-600">
+              {person.bills.slice(0, 3).map((bill, index) => (
+                <li key={bill.id} className="flex items-center justify-between">
+                  <span className="font-medium text-slate-700">{bill.label || `Bill ${index + 1}`}</span>
+                  <span className="font-semibold text-slate-900">{formatCurrency(bill.amount)}</span>
+                </li>
+              ))}
+            </ul>
+            {billCount > 3 ? (
+              <p className="mt-2 text-xs text-slate-500">See the full list and edit labels in Advanced mode.</p>
+            ) : null}
+          </div>
+        </div>
+
+        <footer className="rounded-2xl bg-slate-900/90 px-4 py-3 text-sm text-slate-100">
+          Need to fine-tune every paycheck or bill? Switch to Advanced mode for full control—your current numbers stay saved.
+        </footer>
+      </article>
+    );
+  }
 
   const Panel = ({ id, title, description, children }: PanelProps) => (
     <div className="rounded-2xl border border-slate-200 bg-slate-50/60">

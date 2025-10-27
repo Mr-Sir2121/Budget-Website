@@ -33,6 +33,7 @@ import {
 import type { TooltipProps } from 'recharts';
 
 const STORAGE_KEY = 'budget-blueprint-state-v1';
+const MODE_STORAGE_KEY = 'budget-blueprint-mode-v1';
 const SAVINGS_MONTHS = 12;
 
 const SECTION_IDS = {
@@ -85,6 +86,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 const PERSON_COLORS = ['#2563eb', '#9333ea', '#0ea5e9', '#14b8a6', '#f97316'];
 
 type RentMode = 'fair' | 'equal';
+type ViewMode = 'quick' | 'advanced';
 
 interface BudgetState {
   rent: number;
@@ -158,6 +160,67 @@ const clonePerson = (person: PersonState): PersonState => ({
   paychecks: [...person.paychecks],
   bills: person.bills.map((bill) => ({ ...bill })),
 });
+
+interface RuleTemplate {
+  id: string;
+  name: string;
+  description: string;
+  apply: (state: BudgetState) => BudgetState;
+}
+
+const RULE_TEMPLATES: RuleTemplate[] = [
+  {
+    id: 'rent-30',
+    name: '30% rent rule',
+    description: 'Align rent with the classic 30% of combined take-home guideline.',
+    apply: (state) => {
+      const incomes = state.persons.map((person) =>
+        monthlyFromPay(average(person.paychecks), person.payPeriod),
+      );
+      const recommendedRent = incomes.reduce((acc, income) => acc + income * 0.3, 0);
+      if (!Number.isFinite(recommendedRent)) {
+        return state;
+      }
+      const rounded = Math.max(0, Math.round(recommendedRent * 100) / 100);
+      return { ...state, rent: rounded, rentMode: 'fair' } satisfies BudgetState;
+    },
+  },
+  {
+    id: 'fifty-thirty-twenty',
+    name: '50 / 30 / 20',
+    description: 'Recommended split: 50% needs, 30% wants, 20% savings & debt snowball.',
+    apply: (state) => ({
+      ...state,
+      persons: state.persons.map((person) => ({
+        ...person,
+        savingsRate: 0.2,
+        wantsRate: 0.3,
+        bills: person.bills.map((bill, index) => ({
+          ...bill,
+          label: bill.label?.trim() ? bill.label : `Need ${index + 1}`,
+        })),
+      })),
+    }),
+  },
+  {
+    id: 'zero-based',
+    name: 'Zero-based',
+    description: 'Give every dollar a job: dial up savings & debt, trim flex spending.',
+    apply: (state) => ({
+      ...state,
+      rentMode: 'fair',
+      persons: state.persons.map((person) => ({
+        ...person,
+        savingsRate: Math.min(0.25, Math.max(person.savingsRate, 0.2)),
+        wantsRate: Math.min(person.wantsRate, 0.1),
+        bills: person.bills.map((bill) => ({
+          ...bill,
+          label: bill.label?.trim() ? bill.label : 'Planned expense',
+        })),
+      })),
+    }),
+  },
+];
 
 const createDefaultState = (): BudgetState => ({
   rent: 2169.17,
@@ -274,11 +337,21 @@ const loadInitialState = (): BudgetState => {
   }
 };
 
+const loadInitialMode = (): ViewMode => {
+  if (typeof window === 'undefined') {
+    return 'quick';
+  }
+  const stored = window.localStorage.getItem(MODE_STORAGE_KEY);
+  return stored === 'advanced' ? 'advanced' : 'quick';
+};
+
 const App = () => {
   const [state, setState] = useState<BudgetState>(() => loadInitialState());
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [highlightSaved, setHighlightSaved] = useState(false);
   const [activeSection, setActiveSection] = useState<string>(SECTION_IDS.overview);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => loadInitialMode());
+  const [activeTemplate, setActiveTemplate] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
@@ -289,6 +362,11 @@ const App = () => {
     const timeout = window.setTimeout(() => setHighlightSaved(false), 2000);
     return () => window.clearTimeout(timeout);
   }, [state]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(MODE_STORAGE_KEY, viewMode);
+  }, [viewMode]);
 
   const setRent = (value: string) => {
     setState((prev) => ({ ...prev, rent: clampNumber(value, prev.rent) }));
@@ -339,6 +417,48 @@ const App = () => {
       setActiveSection(SECTION_IDS.overview);
     }
   }, [handleNavigate]);
+
+  const handleModeChange = (mode: ViewMode) => {
+    setViewMode(mode);
+  };
+
+  const handleApplyTemplate = (templateId: string) => {
+    const template = RULE_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) {
+      return;
+    }
+    setState((prev) => template.apply(prev));
+    setActiveTemplate(templateId);
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible.length > 0) {
+          const topMost = visible[0];
+          if (topMost?.target?.id) {
+            setActiveSection(topMost.target.id);
+          }
+        }
+      },
+      {
+        threshold: 0.4,
+        rootMargin: '-20% 0px -50% 0px',
+      },
+    );
+
+    const sections = Object.values(SECTION_IDS)
+      .map((id) => document.getElementById(id))
+      .filter((element): element is HTMLElement => Boolean(element));
+
+    sections.forEach((section) => observer.observe(section));
+
+    return () => observer.disconnect();
+  }, []);
 
   const persons = state.persons;
 
@@ -391,6 +511,9 @@ const App = () => {
     ? 'border-success/20 bg-success/10 text-success'
     : 'border-danger/20 bg-danger/10 text-danger';
 
+  const rentPercentOfIncome = totalIncome > 0 ? (state.rent / totalIncome) * 100 : 0;
+  const rentBenchmark = rentPercentOfIncome > 0 ? rentPercentOfIncome.toFixed(1) : '0.0';
+
   const finalSavingsPerPerson = savingsSeries.map((series, index) => {
     if (series.length === 0) {
       return persons[index]?.startingSavings ?? 0;
@@ -404,6 +527,8 @@ const App = () => {
   const totalBillSpend = budgets.reduce((acc, budget) => acc + (budget.bills ?? 0), 0);
   const savedStatus = formatRelativeTime(lastSaved);
   const savingsGain = Math.max(combinedFinalSavings - combinedStartingSavings, 0);
+  const savingsMonthlyPercent = totalIncome > 0 ? (totalMonthlySavings / totalIncome) * 100 : 0;
+  const debtMonthlyPercent = totalIncome > 0 ? (totalMonthlyDebt / totalIncome) * 100 : 0;
 
   const fastestPayoff = useMemo(() => {
     const finite = payoffs
@@ -483,22 +608,53 @@ const App = () => {
               this browser so you can come back anytime.
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-3 text-sm text-slate-600 sm:justify-between">
+          <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-slate-600 sm:justify-between">
             <p className="flex items-center gap-2 text-sm font-medium">
               <span role="img" aria-label="lightbulb">
                 💡
               </span>
               Change any number to see the ripple effects across the entire plan in real time.
             </p>
-            <div
-              className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition ${
-                highlightSaved ? 'border-success/40 bg-success/10 text-success' : 'border-slate-200 bg-white text-slate-500'
-              }`}
-            >
-              <span role="img" aria-label="disk">
-                💾
-              </span>
-              {savedStatus}
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mode</span>
+                <div className="inline-flex rounded-full bg-slate-200/70 p-1 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('quick')}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                      viewMode === 'quick'
+                        ? 'bg-white text-primary shadow'
+                        : 'text-slate-600 hover:text-primary'
+                    }`}
+                    aria-pressed={viewMode === 'quick'}
+                  >
+                    Quick
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleModeChange('advanced')}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                      viewMode === 'advanced'
+                        ? 'bg-white text-primary shadow'
+                        : 'text-slate-600 hover:text-primary'
+                    }`}
+                    aria-pressed={viewMode === 'advanced'}
+                  >
+                    Advanced
+                  </button>
+                </div>
+              </div>
+              <div
+                className={`flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                  highlightSaved ? 'border-success/40 bg-success/10 text-success' : 'border-slate-200 bg-white text-slate-500'
+                }`}
+              >
+                <span role="img" aria-label="disk">
+                  💾
+                </span>
+                {savedStatus}
+              </div>
             </div>
           </div>
         </header>
@@ -514,6 +670,7 @@ const App = () => {
                   className={`rounded-full px-4 py-1 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
                     activeSection === item.id ? 'bg-primary text-white shadow' : 'text-slate-600 hover:bg-primary/10 hover:text-primary'
                   }`}
+                  aria-pressed={activeSection === item.id}
                 >
                   {item.label}
                 </button>
@@ -538,7 +695,48 @@ const App = () => {
           </div>
         </nav>
 
-        <section aria-labelledby="overview-heading" className="mt-10 space-y-6">
+        <section aria-labelledby="templates-heading" className="mt-12 space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 id="templates-heading" className="text-lg font-semibold text-slate-900">
+                Guided rule templates
+              </h2>
+              <p className="text-sm text-slate-600">
+                Jump-start your plan with preset guardrails. Applying a template simply updates the inputs on this page.
+              </p>
+            </div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {viewMode === 'quick' ? 'Quick mode: essentials only' : 'Advanced mode: every input unlocked'}
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {RULE_TEMPLATES.map((template) => {
+              const isActive = activeTemplate === template.id;
+              return (
+                <button
+                  key={template.id}
+                  type="button"
+                  onClick={() => handleApplyTemplate(template.id)}
+                  className={`group flex h-full flex-col items-start rounded-2xl border px-4 py-4 text-left shadow-soft transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                    isActive
+                      ? 'border-primary/40 bg-primary/5 text-primary'
+                      : 'border-slate-200 bg-white text-slate-700 hover:border-primary/40 hover:bg-primary/5'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+                    {isActive ? 'Selected' : 'Preset'}
+                  </span>
+                  <span className="mt-3 text-lg font-semibold text-slate-900 group-hover:text-primary">
+                    {template.name}
+                  </span>
+                  <span className="mt-1 text-sm text-slate-600 group-hover:text-slate-700">{template.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section aria-labelledby="overview-heading" className="mt-12 space-y-6">
           <div>
             <h2 id="overview-heading" className="text-lg font-semibold text-slate-900">
               Household snapshot
@@ -555,17 +753,26 @@ const App = () => {
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Monthly rent</p>
               <div className="mt-2 flex items-center justify-between gap-3">
                 <p className="text-3xl font-bold text-slate-900">{formatCurrency(state.rent)}</p>
-                <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${rentVerdictBadgeClass}`}>
+                <span
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${rentVerdictBadgeClass}`}
+                  title={`Guideline rent cap: ${formatCurrency(totalAffordableRent)}`}
+                >
                   <span className="inline-block h-2 w-2 rounded-full bg-current" aria-hidden />
                   {rentVerdictLabel}
                 </span>
               </div>
               <p className="mt-1 text-sm text-slate-500">30% guideline total: {formatCurrency(totalAffordableRent)}</p>
+              <p className="mt-2 text-xs font-semibold text-primary">
+                You're spending {rentBenchmark}% of combined income vs. the 30% benchmark.
+              </p>
             </div>
             <div className="rounded-2xl bg-white p-5 shadow-soft ring-1 ring-slate-200/60">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">12-month savings</p>
               <p className="mt-2 text-3xl font-bold text-slate-900">{formatCurrency(combinedFinalSavings)}</p>
               <p className="mt-1 text-sm text-slate-500">Projected gain: {formatCurrency(savingsGain)} vs. today.</p>
+              <p className="mt-2 text-xs font-semibold text-primary">
+                Saving {savingsMonthlyPercent.toFixed(1)}% of income each month.
+              </p>
             </div>
             <div className="rounded-2xl bg-white p-5 shadow-soft ring-1 ring-slate-200/60">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Debt momentum</p>
@@ -574,6 +781,9 @@ const App = () => {
                   <p className="mt-2 text-3xl font-bold text-slate-900">{(fastestPayoff.payoff.months as number).toFixed(0)} months</p>
                   <p className="mt-1 text-sm text-slate-500">
                     {fastestPayoff.person.name} clears debt first with {formatCurrency(budgets[persons.indexOf(fastestPayoff.person)]?.debt ?? 0)} per month.
+                  </p>
+                  <p className="mt-2 text-xs font-semibold text-primary">
+                    Snowballing {debtMonthlyPercent.toFixed(1)}% of income toward debt.
                   </p>
                 </>
               ) : (
@@ -608,6 +818,7 @@ const App = () => {
                 budget={budgets[index] ?? ({} as BudgetPersonResult)}
                 payoff={payoffs[index] ?? { months: Infinity, debtSeries: [] }}
                 savingsPoints={savingsSeries[index] ?? []}
+                mode={viewMode}
                 onChange={(next) => updatePerson(person.id, next)}
               />
             ))}
@@ -620,7 +831,10 @@ const App = () => {
               <h2 className="text-2xl font-semibold text-slate-900">Rent guardrails</h2>
               <p className="text-sm text-slate-600">Compare your rent against the 30% rule and choose a fair or equal split.</p>
             </div>
-            <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold ${rentVerdictBadgeClass}`}>
+            <span
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold ${rentVerdictBadgeClass}`}
+              title={`Guideline rent cap: ${formatCurrency(totalAffordableRent)}`}
+            >
               <span className="inline-block h-2 w-2 rounded-full bg-current" aria-hidden />
               {rentVerdictLabel}
             </span>
@@ -652,6 +866,7 @@ const App = () => {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">30% guideline</p>
                   <p className="mt-2 text-lg font-semibold text-slate-900">{formatCurrency(totalAffordableRent)}</p>
                   <p className="mt-1 text-xs text-slate-500">Combined cap based on each person's income.</p>
+                  <p className="mt-2 text-xs font-semibold text-primary">Rent absorbs {rentBenchmark}% of take-home today.</p>
                 </div>
 
                 <div>
